@@ -14,14 +14,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java 21
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '17'
           cache: maven
 
       - name: Run Maven tests
+        env:
+          SPRING_PROFILES_ACTIVE: dev
+          AZURE_B2C_ISSUER_URI: ${{ secrets.AZURE_B2C_ISSUER_URI }}
+          AZURE_B2C_JWK_SET_URI: ${{ secrets.AZURE_B2C_JWK_SET_URI }}
+          AZURE_B2C_AUDIENCE: ${{ secrets.AZURE_B2C_AUDIENCE }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_S3_BUCKET_NAME: ${{ secrets.AWS_S3_BUCKET_NAME }}
         run: mvn clean test
 
       - name: Set up Docker Buildx
@@ -33,13 +40,13 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push ARM64 Docker image
+      - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/arm64/v8
+          platforms: linux/amd64
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/gestiondespachos:arm64
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/gestiondespachos:latest
 
       - name: Prepare SSH key
         run: |
@@ -50,7 +57,7 @@ jobs:
       - name: Deploy container on EC2
         run: |
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << EOF
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/gestiondespachos:arm64
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/gestiondespachos:latest
 
             docker stop gestiondespachos-app || true
             docker rm gestiondespachos-app || true
@@ -58,14 +65,19 @@ jobs:
             docker run -d \
               --name gestiondespachos-app \
               -p 8080:8080 \
+              -e SPRING_PROFILES_ACTIVE=dev \
               -e EFS_MOUNT_PATH=/app/efs \
               -e AWS_REGION='${{ secrets.AWS_REGION }}' \
               -e AWS_S3_BUCKET_NAME='${{ secrets.AWS_S3_BUCKET_NAME }}' \
               -e AWS_ACCESS_KEY_ID='${{ secrets.AWS_ACCESS_KEY_ID }}' \
               -e AWS_SECRET_ACCESS_KEY='${{ secrets.AWS_SECRET_ACCESS_KEY }}' \
               -e AWS_SESSION_TOKEN='${{ secrets.AWS_SESSION_TOKEN }}' \
+              -e AZURE_B2C_ISSUER_URI='${{ secrets.AZURE_B2C_ISSUER_URI }}' \
+              -e AZURE_B2C_JWK_SET_URI='${{ secrets.AZURE_B2C_JWK_SET_URI }}' \
+              -e AZURE_B2C_AUDIENCE='${{ secrets.AZURE_B2C_AUDIENCE }}' \
               -v /app/efs:/app/efs \
-              ${{ secrets.DOCKERHUB_USERNAME }}/gestiondespachos:arm64
+              ${{ secrets.DOCKERHUB_USERNAME }}/gestiondespachos:latest
 
             docker ps
+            docker logs --tail 80 gestiondespachos-app
           EOF

@@ -1,5 +1,5 @@
-# Etapa 1: construcción del proyecto
-FROM maven:3.9.9-eclipse-temurin-21 AS build
+# Etapa 1: construccion del proyecto
+FROM maven:3.9.9-eclipse-temurin-17 AS build
 
 WORKDIR /app
 
@@ -8,14 +8,14 @@ COPY src ./src
 
 RUN mvn clean package -DskipTests
 
-# Etapa 2: ejecución de la aplicación
-FROM eclipse-temurin:21-jre
+# Etapa 2: ejecucion de la aplicacion
+FROM eclipse-temurin:17-jre
 
 WORKDIR /app
 
 COPY --from=build /app/target/*.jar app.jar
 
-# Carpeta donde se montará EFS dentro del contenedor
+# Carpeta donde se montara el almacenamiento local/EFS simulado
 RUN mkdir -p /app/efs
 
 EXPOSE 8080

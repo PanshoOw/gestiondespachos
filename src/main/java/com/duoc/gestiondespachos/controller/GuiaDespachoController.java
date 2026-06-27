@@ -50,8 +50,8 @@ public class GuiaDespachoController {
         return ResponseEntity.status(HttpStatus.CREATED).body(respuesta);
     }
 
-    @GetMapping("/historial")
-    public ResponseEntity<List<HistorialGuiaDTO>> consultarHistorial(
+    @GetMapping({"", "/historial"})
+    public ResponseEntity<List<HistorialGuiaDTO>> consultarGuias(
             @RequestParam(required = false) String transportista,
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha) {
@@ -80,7 +80,7 @@ public class GuiaDespachoController {
         return ResponseEntity.status(HttpStatus.CREATED).body(respuesta);
     }
 
-    @GetMapping("/{id}/s3")
+    @GetMapping({"/{id}/s3", "/{id}/descargar"})
     public ResponseEntity<byte[]> descargarGuiaDesdeS3(
             @PathVariable Long id,
             @RequestParam String transportista) {
@@ -117,8 +117,8 @@ public class GuiaDespachoController {
         return ResponseEntity.ok(respuesta);
     }
 
-    @DeleteMapping("/{id}/s3")
-    public ResponseEntity<GuiaS3ResponseDTO> eliminarGuiaDesdeS3(@PathVariable Long id) {
+    @DeleteMapping({"/{id}", "/{id}/s3"})
+    public ResponseEntity<GuiaS3ResponseDTO> eliminarGuia(@PathVariable Long id) {
 
         GuiaS3ResponseDTO respuesta = guiaS3Service.eliminarGuiaDesdeS3(id);
 
