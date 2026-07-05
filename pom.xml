@@ -111,6 +111,13 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- Driver PostgreSQL para Amazon RDS -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
     </dependencies>
 
     <build>
