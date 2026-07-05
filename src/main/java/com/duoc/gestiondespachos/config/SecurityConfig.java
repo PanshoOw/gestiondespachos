@@ -29,6 +29,7 @@ public class SecurityConfig {
     private static final String CLAIM_ROLES = "roles";
     private static final String CLAIM_SCOPES = "scp";
     private static final String CLAIM_CONSULTA_ROLE_SUFFIX = "consultaRole";
+    private static final String CLAIM_EXTENSION_ROLE = "extension_role";
 
     private static final String SCOPE_GUIAS_DESCARGAR = "guias.descargar";
     private static final String SCOPE_GUIAS_GESTIONAR = "guias.gestionar";
@@ -81,6 +82,7 @@ public class SecurityConfig {
 
             // Claim estándar si Azure AD B2C entrega roles directamente.
             agregarRolesDesdeClaim(authorities, jwt.getClaim(CLAIM_ROLES));
+            agregarRolesDesdeClaim(authorities, jwt.getClaim(CLAIM_EXTENSION_ROLE));
 
             // Custom claims de Azure AD B2C.
             // La guía trabaja con extension_consultaRole, pero Azure puede emitirlo
