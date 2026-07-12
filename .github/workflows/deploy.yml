@@ -5,86 +5,301 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
+concurrency:
+  group: gestiondespachos-production
+  cancel-in-progress: true
+
 jobs:
   build-and-deploy:
     name: Build Docker image and deploy to EC2
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      rabbitmq:
+        image: rabbitmq:4-management
+        env:
+          RABBITMQ_DEFAULT_USER: ${{ secrets.RABBITMQ_USERNAME }}
+          RABBITMQ_DEFAULT_PASS: ${{ secrets.RABBITMQ_PASSWORD }}
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
+      # 1. Descargar el código fuente.
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Preparar Java para compilar y probar el proyecto.
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
           cache: maven
 
+      # 3. Ejecutar las pruebas con H2 y RabbitMQ temporal.
       - name: Run Maven tests
         env:
           SPRING_PROFILES_ACTIVE: dev
+
+          RABBITMQ_HOST: localhost
+          RABBITMQ_PORT: 5672
+          RABBITMQ_USERNAME: ${{ secrets.RABBITMQ_USERNAME }}
+          RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
+
           AZURE_B2C_ISSUER_URI: ${{ secrets.AZURE_B2C_ISSUER_URI }}
           AZURE_B2C_JWK_SET_URI: ${{ secrets.AZURE_B2C_JWK_SET_URI }}
           AZURE_B2C_AUDIENCE: ${{ secrets.AZURE_B2C_AUDIENCE }}
+
           AWS_REGION: ${{ secrets.AWS_REGION }}
           AWS_S3_BUCKET_NAME: ${{ secrets.AWS_S3_BUCKET_NAME }}
-        run: mvn clean test
+        run: mvn -B clean test
 
+      # 4. Preparar la construcción de imágenes Docker.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # 5. Autenticarse en Docker Hub.
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # 6. Construir y publicar la imagen del backend.
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/gestiondespachos:latest
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/gestiondespachos:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/gestiondespachos:${{ github.sha }}
 
+      # 7. Preparar la conexión SSH con EC2.
       - name: Prepare SSH key
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key.pem
           chmod 600 ~/.ssh/ec2_key.pem
 
-      - name: Deploy container on EC2
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+
+      # 8. Desplegar RabbitMQ y el backend en EC2.
+      - name: Deploy containers on EC2
+        env:
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_S3_BUCKET_NAME: ${{ secrets.AWS_S3_BUCKET_NAME }}
+
+          SPRING_DATASOURCE_URL: ${{ secrets.SPRING_DATASOURCE_URL }}
+          SPRING_DATASOURCE_USERNAME: ${{ secrets.SPRING_DATASOURCE_USERNAME }}
+          SPRING_DATASOURCE_PASSWORD: ${{ secrets.SPRING_DATASOURCE_PASSWORD }}
+
+          AZURE_B2C_ISSUER_URI: ${{ secrets.AZURE_B2C_ISSUER_URI }}
+          AZURE_B2C_JWK_SET_URI: ${{ secrets.AZURE_B2C_JWK_SET_URI }}
+          AZURE_B2C_AUDIENCE: ${{ secrets.AZURE_B2C_AUDIENCE }}
+
+          RABBITMQ_USERNAME: ${{ secrets.RABBITMQ_USERNAME }}
+          RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
+
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << EOF
-            echo "Iniciando despliegue en EC2..."
+          cat > /tmp/gestiondespachos_deploy.sh <<'REMOTE_SCRIPT'
+          set -Eeuo pipefail
 
-            docker login -u '${{ secrets.DOCKERHUB_USERNAME }}' -p '${{ secrets.DOCKERHUB_TOKEN }}'
+          BACKEND_IMAGE="${DOCKERHUB_USERNAME}/gestiondespachos:latest"
+          NETWORK_NAME="gestiondespachos-network"
+          RABBIT_CONTAINER="gestiondespachos-rabbitmq"
+          BACKEND_CONTAINER="gestiondespachos-ec2"
 
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/gestiondespachos:latest
+          echo "Iniciando despliegue en EC2..."
 
-            docker stop gestiondespachos-ec2 || true
-            docker rm gestiondespachos-ec2 || true
+          # Autenticación segura en Docker Hub.
+          printf '%s' "$DOCKERHUB_TOKEN" |
+            docker login \
+              --username "$DOCKERHUB_USERNAME" \
+              --password-stdin
 
-            docker run -d \
-              --name gestiondespachos-ec2 \
-              -p 8080:8080 \
-              -v /mnt/efs/gestiondespachos:/app/efs \
-              -e SPRING_PROFILES_ACTIVE=rds \
-              -e EFS_MOUNT_PATH=/app/efs \
-              -e AWS_REGION='${{ secrets.AWS_REGION }}' \
-              -e AWS_S3_BUCKET_NAME='${{ secrets.AWS_S3_BUCKET_NAME }}' \
-              -e SPRING_DATASOURCE_URL='${{ secrets.SPRING_DATASOURCE_URL }}' \
-              -e SPRING_DATASOURCE_USERNAME='${{ secrets.SPRING_DATASOURCE_USERNAME }}' \
-              -e SPRING_DATASOURCE_PASSWORD='${{ secrets.SPRING_DATASOURCE_PASSWORD }}' \
-              -e AZURE_B2C_ISSUER_URI='${{ secrets.AZURE_B2C_ISSUER_URI }}' \
-              -e AZURE_B2C_JWK_SET_URI='${{ secrets.AZURE_B2C_JWK_SET_URI }}' \
-              -e AZURE_B2C_AUDIENCE='${{ secrets.AZURE_B2C_AUDIENCE }}' \
-              ${{ secrets.DOCKERHUB_USERNAME }}/gestiondespachos:latest
+          echo "Descargando imágenes Docker..."
+          docker pull "$BACKEND_IMAGE"
+          docker pull rabbitmq:4-management
 
-            echo "Contenedor desplegado:"
-            docker ps
+          # Crear la red privada compartida si todavía no existe.
+          if ! docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
+            docker network create "$NETWORK_NAME"
+          fi
 
-            echo "Logs recientes:"
-            docker logs --tail 80 gestiondespachos-ec2
-          EOF
+          # Eliminar el contenedor anterior de RabbitMQ.
+          # El volumen persiste, por lo que las colas y mensajes se conservan.
+          docker rm -f "$RABBIT_CONTAINER" 2>/dev/null || true
+
+          echo "Levantando RabbitMQ..."
+
+          docker run -d \
+            --name "$RABBIT_CONTAINER" \
+            --restart unless-stopped \
+            --network "$NETWORK_NAME" \
+            -p 15672:15672 \
+            -v gestiondespachos-rabbitmq-data:/var/lib/rabbitmq \
+            --health-cmd="rabbitmq-diagnostics -q ping" \
+            --health-interval=10s \
+            --health-timeout=5s \
+            --health-retries=12 \
+            -e RABBITMQ_DEFAULT_USER="$RABBITMQ_USERNAME" \
+            -e RABBITMQ_DEFAULT_PASS="$RABBITMQ_PASSWORD" \
+            rabbitmq:4-management
+
+          echo "Esperando que RabbitMQ esté disponible..."
+
+          rabbitmq_ready=false
+
+          for intento in $(seq 1 30); do
+            rabbitmq_status="$(
+              docker inspect \
+                --format='{{.State.Health.Status}}' \
+                "$RABBIT_CONTAINER" 2>/dev/null || true
+            )"
+
+            if [ "$rabbitmq_status" = "healthy" ]; then
+              rabbitmq_ready=true
+              break
+            fi
+
+            if [ "$rabbitmq_status" = "unhealthy" ]; then
+              echo "RabbitMQ fue marcado como unhealthy."
+              docker logs --tail 150 "$RABBIT_CONTAINER"
+              exit 1
+            fi
+
+            sleep 3
+          done
+
+          if [ "$rabbitmq_ready" != "true" ]; then
+            echo "RabbitMQ no estuvo disponible dentro del tiempo esperado."
+            docker logs --tail 150 "$RABBIT_CONTAINER"
+            exit 1
+          fi
+
+          echo "RabbitMQ está disponible."
+
+          # Reemplazar el backend anterior.
+          docker rm -f "$BACKEND_CONTAINER" 2>/dev/null || true
+
+          echo "Levantando backend Spring Boot..."
+
+          docker run -d \
+            --name "$BACKEND_CONTAINER" \
+            --restart unless-stopped \
+            --network "$NETWORK_NAME" \
+            -p 8080:8080 \
+            -v /mnt/efs/gestiondespachos:/app/efs \
+            -e SPRING_PROFILES_ACTIVE=rds \
+            -e EFS_MOUNT_PATH=/app/efs \
+            -e AWS_REGION="$AWS_REGION" \
+            -e AWS_S3_BUCKET_NAME="$AWS_S3_BUCKET_NAME" \
+            -e SPRING_DATASOURCE_URL="$SPRING_DATASOURCE_URL" \
+            -e SPRING_DATASOURCE_USERNAME="$SPRING_DATASOURCE_USERNAME" \
+            -e SPRING_DATASOURCE_PASSWORD="$SPRING_DATASOURCE_PASSWORD" \
+            -e AZURE_B2C_ISSUER_URI="$AZURE_B2C_ISSUER_URI" \
+            -e AZURE_B2C_JWK_SET_URI="$AZURE_B2C_JWK_SET_URI" \
+            -e AZURE_B2C_AUDIENCE="$AZURE_B2C_AUDIENCE" \
+            -e RABBITMQ_HOST="$RABBIT_CONTAINER" \
+            -e RABBITMQ_PORT=5672 \
+            -e RABBITMQ_USERNAME="$RABBITMQ_USERNAME" \
+            -e RABBITMQ_PASSWORD="$RABBITMQ_PASSWORD" \
+            "$BACKEND_IMAGE"
+
+          echo "Esperando el inicio del backend..."
+
+          backend_ready=false
+
+          for intento in $(seq 1 40); do
+            backend_running="$(
+              docker inspect \
+                --format='{{.State.Running}}' \
+                "$BACKEND_CONTAINER" 2>/dev/null || echo false
+            )"
+
+            if [ "$backend_running" != "true" ]; then
+              echo "El contenedor del backend se detuvo durante el inicio."
+              docker logs --tail 200 "$BACKEND_CONTAINER"
+              exit 1
+            fi
+
+            if docker logs "$BACKEND_CONTAINER" 2>&1 |
+              grep -q "Started GestiondespachosApplication"; then
+              backend_ready=true
+              break
+            fi
+
+            sleep 3
+          done
+
+          if [ "$backend_ready" != "true" ]; then
+            echo "El backend no inició dentro del tiempo esperado."
+            docker logs --tail 200 "$BACKEND_CONTAINER"
+            exit 1
+          fi
+
+          echo "Backend iniciado correctamente."
+
+          echo "Contenedores desplegados:"
+          docker ps \
+            --filter "name=$RABBIT_CONTAINER" \
+            --filter "name=$BACKEND_CONTAINER"
+
+          echo "Estado de RabbitMQ:"
+          docker inspect \
+            --format='{{.State.Health.Status}}' \
+            "$RABBIT_CONTAINER"
+
+          echo "Logs recientes del backend:"
+          docker logs --tail 100 "$BACKEND_CONTAINER"
+
+          # Eliminar imágenes antiguas que ya no estén siendo utilizadas.
+          docker image prune -f
+
+          echo "Despliegue finalizado correctamente."
+          REMOTE_SCRIPT
+
+          # Enviar las variables al servidor con escape seguro para Bash.
+          {
+            printf 'export DOCKERHUB_USERNAME=%q\n' "$DOCKERHUB_USERNAME"
+            printf 'export DOCKERHUB_TOKEN=%q\n' "$DOCKERHUB_TOKEN"
+
+            printf 'export AWS_REGION=%q\n' "$AWS_REGION"
+            printf 'export AWS_S3_BUCKET_NAME=%q\n' "$AWS_S3_BUCKET_NAME"
+
+            printf 'export SPRING_DATASOURCE_URL=%q\n' "$SPRING_DATASOURCE_URL"
+            printf 'export SPRING_DATASOURCE_USERNAME=%q\n' "$SPRING_DATASOURCE_USERNAME"
+            printf 'export SPRING_DATASOURCE_PASSWORD=%q\n' "$SPRING_DATASOURCE_PASSWORD"
+
+            printf 'export AZURE_B2C_ISSUER_URI=%q\n' "$AZURE_B2C_ISSUER_URI"
+            printf 'export AZURE_B2C_JWK_SET_URI=%q\n' "$AZURE_B2C_JWK_SET_URI"
+            printf 'export AZURE_B2C_AUDIENCE=%q\n' "$AZURE_B2C_AUDIENCE"
+
+            printf 'export RABBITMQ_USERNAME=%q\n' "$RABBITMQ_USERNAME"
+            printf 'export RABBITMQ_PASSWORD=%q\n' "$RABBITMQ_PASSWORD"
+
+            cat /tmp/gestiondespachos_deploy.sh
+          } |
+            ssh \
+              -i ~/.ssh/ec2_key.pem \
+              "$EC2_USER@$EC2_HOST" \
+              "bash -s"

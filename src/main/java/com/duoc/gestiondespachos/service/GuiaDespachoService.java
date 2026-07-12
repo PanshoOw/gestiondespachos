@@ -23,11 +23,16 @@ public class GuiaDespachoService {
 
     private final GuiaDespachoRepository guiaDespachoRepository;
     private final GuiaArchivoService guiaArchivoService;
+    private final GuiaRabbitProducer guiaRabbitProducer;
 
-    public GuiaDespachoService(GuiaDespachoRepository guiaDespachoRepository,
-                               GuiaArchivoService guiaArchivoService) {
+    public GuiaDespachoService(
+            GuiaDespachoRepository guiaDespachoRepository,
+            GuiaArchivoService guiaArchivoService,
+            GuiaRabbitProducer guiaRabbitProducer) {
+
         this.guiaDespachoRepository = guiaDespachoRepository;
         this.guiaArchivoService = guiaArchivoService;
+        this.guiaRabbitProducer = guiaRabbitProducer;
     }
 
     @Transactional
@@ -58,6 +63,9 @@ public class GuiaDespachoService {
         guiaGuardada.setRutaTemporalEfs(rutaArchivo.toString());
 
         GuiaDespacho guiaActualizada = guiaDespachoRepository.save(guiaGuardada);
+
+        // Enviar a RabbitMQ después del guardado definitivo
+        guiaRabbitProducer.enviarGuia(guiaActualizada);
 
         return convertirAResponseDTO(guiaActualizada);
     }

@@ -42,6 +42,10 @@ public class SecurityConfig {
                 // No se utilizan sesiones ni cookies de navegador para autenticar solicitudes.
                 .csrf(csrf -> csrf.disable())
 
+                .headers(headers -> headers
+                        .frameOptions(frameOptions -> frameOptions.sameOrigin())
+                )
+
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )

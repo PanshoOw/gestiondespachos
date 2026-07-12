@@ -26,6 +26,9 @@ import com.duoc.gestiondespachos.dto.HistorialGuiaDTO;
 import com.duoc.gestiondespachos.service.GuiaDespachoService;
 import com.duoc.gestiondespachos.service.GuiaS3Service;
 
+import com.duoc.gestiondespachos.dto.ConsumoColaResponseDTO;
+import com.duoc.gestiondespachos.service.GuiaRabbitConsumerService;
+
 import jakarta.validation.Valid;
 
 @RestController
@@ -34,11 +37,16 @@ public class GuiaDespachoController {
 
     private final GuiaDespachoService guiaDespachoService;
     private final GuiaS3Service guiaS3Service;
+    private final GuiaRabbitConsumerService guiaRabbitConsumerService;
 
-    public GuiaDespachoController(GuiaDespachoService guiaDespachoService,
-                                  GuiaS3Service guiaS3Service) {
+    public GuiaDespachoController(
+            GuiaDespachoService guiaDespachoService,
+            GuiaS3Service guiaS3Service,
+            GuiaRabbitConsumerService guiaRabbitConsumerService) {
+
         this.guiaDespachoService = guiaDespachoService;
         this.guiaS3Service = guiaS3Service;
+        this.guiaRabbitConsumerService = guiaRabbitConsumerService;
     }
 
     @PostMapping
@@ -48,6 +56,15 @@ public class GuiaDespachoController {
         GuiaDespachoResponseDTO respuesta = guiaDespachoService.crearGuia(requestDTO);
 
         return ResponseEntity.status(HttpStatus.CREATED).body(respuesta);
+    }
+
+    @PostMapping("/cola/consumir")
+    public ResponseEntity<ConsumoColaResponseDTO> consumirMensajesCola() {
+
+        ConsumoColaResponseDTO respuesta =
+                guiaRabbitConsumerService.consumirMensajes();
+
+        return ResponseEntity.ok(respuesta);
     }
 
     @GetMapping({"", "/historial"})
