@@ -210,6 +210,7 @@ jobs:
             -p 8080:8080 \
             -v /mnt/efs/gestiondespachos:/app/efs \
             -e SPRING_PROFILES_ACTIVE=rds \
+            -e APP_S3_AUTO_UPLOAD=true \
             -e EFS_MOUNT_PATH=/app/efs \
             -e AWS_REGION="$AWS_REGION" \
             -e AWS_S3_BUCKET_NAME="$AWS_S3_BUCKET_NAME" \
