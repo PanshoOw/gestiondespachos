@@ -99,10 +99,9 @@ public class GuiaDespachoController {
 
     @GetMapping({"/{id}/s3", "/{id}/descargar"})
     public ResponseEntity<byte[]> descargarGuiaDesdeS3(
-            @PathVariable Long id,
-            @RequestParam String transportista) {
+            @PathVariable Long id) {
 
-        byte[] archivo = guiaS3Service.descargarGuiaDesdeS3(id, transportista);
+        byte[] archivo = guiaS3Service.descargarGuiaDesdeS3(id);
 
         String nombreArchivo = guiaS3Service.obtenerNombreArchivo(id);
 
@@ -112,7 +111,10 @@ public class GuiaDespachoController {
 
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_TYPE, "application/pdf")
-                .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition.toString())
+                .header(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        contentDisposition.toString()
+                )
                 .body(archivo);
     }
 

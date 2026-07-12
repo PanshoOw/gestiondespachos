@@ -89,30 +89,32 @@ public class GuiaS3Service {
     }
 
     @Transactional(readOnly = true)
-    public byte[] descargarGuiaDesdeS3(Long idGuia, String transportistaSolicitante) {
+    public byte[] descargarGuiaDesdeS3(Long idGuia) {
 
-        Long idValidado = Objects.requireNonNull(idGuia, MENSAJE_ID_GUIA_NULO);
+        Long idValidado = Objects.requireNonNull(
+                idGuia,
+                MENSAJE_ID_GUIA_NULO
+        );
+
         validarBucketConfigurado();
 
-        if (!StringUtils.hasText(transportistaSolicitante)) {
-            throw new IllegalArgumentException("Debe indicar el transportista solicitante para descargar la guía.");
-        }
-
         GuiaDespacho guiaDespacho = buscarGuiaPorId(idValidado);
-
-        validarPermisoDescarga(guiaDespacho, transportistaSolicitante);
 
         String keyS3 = obtenerKeyS3Validada(guiaDespacho);
 
         validarExistenciaArchivoS3(keyS3);
 
         try (S3Object objetoS3 = s3Client.getObject(bucketName, keyS3);
-             S3ObjectInputStream inputStream = objetoS3.getObjectContent()) {
+            S3ObjectInputStream inputStream =
+                    objetoS3.getObjectContent()) {
 
             return inputStream.readAllBytes();
 
         } catch (IOException ex) {
-            throw new IllegalStateException("No se pudo descargar la guía desde AWS S3.", ex);
+            throw new IllegalStateException(
+                    "No se pudo descargar la guía desde AWS S3.",
+                    ex
+            );
         }
     }
 
@@ -231,17 +233,6 @@ public class GuiaS3Service {
         guiaDespachoRepository.save(guiaDespacho);
 
         return rutaRegenerada;
-    }
-
-    private void validarPermisoDescarga(GuiaDespacho guiaDespacho, String transportistaSolicitante) {
-
-        String transportistaRegistrado = guiaDespacho.getTransportista();
-
-        if (!transportistaRegistrado.equalsIgnoreCase(transportistaSolicitante.trim())) {
-            throw new IllegalArgumentException(
-                    "El transportista indicado no tiene permiso para descargar esta guía."
-            );
-        }
     }
 
     private String obtenerKeyS3Validada(GuiaDespacho guiaDespacho) {
